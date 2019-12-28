@@ -2,7 +2,7 @@ RethinkDB Helper heavily inspired by RedBeanPHP more features to come in the nea
 
 ## Example data class
 ```CSharp
-public class User : RethinkObject<User, Guid>, IDocument<Guid>
+public class User : RethinkObject<User>, IDocument<Guid>
 {
     [SecondaryIndex] public string EmailAddress { get; set; }
     public string Password { get; set; }

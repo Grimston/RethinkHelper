@@ -1,14 +1,11 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Reflection.Emit;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 using RethinkDb.Driver;
-using RethinkDb.Driver.Ast;
 using RethinkDb.Driver.Extras.Dao;
 using RethinkDb.Driver.Model;
 using RethinkDb.Driver.Net;
@@ -46,7 +43,7 @@ namespace RH
         /// </summary>
         /// <typeparam name="T">The Document type</typeparam>
         /// <returns></returns>
-        public static T Dispense<T>() where T : RethinkObject<T, Guid>, IDocument<Guid>, new()
+        public static T Dispense<T>() where T : RethinkObject<T>, IDocument<Guid>, new()
         {
             return new T();
         }
@@ -420,12 +417,12 @@ namespace RH
             }
         }
 
-        public static void Trash<T>(RethinkObject<T, Guid> obj) where T : IDocument<Guid>, new()
+        public static void Trash<T>(RethinkObject<T> obj) where T : IDocument<Guid>, new()
         {
             TrashAsync(obj).WaitSync();
         }
 
-        public static async Task TrashAsync<T>(RethinkObject<T, Guid> obj) where T : IDocument<Guid>, new()
+        public static async Task TrashAsync<T>(RethinkObject<T> obj) where T : IDocument<Guid>, new()
         {
             await TrashAsync((object) obj);
         }
