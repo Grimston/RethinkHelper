@@ -3,15 +3,19 @@ RethinkDB Helper heavily inspired by RedBeanPHP more features to come in the nea
 Example data class
 ```CSharp
 public class User : RethinkObject<User, Guid>, IDocument<Guid>
-{
-    [SecondaryIndex] public string EmailAddress { get; set; }
-    public string Password { get; set; }
-    public string FirstName { get; set; }
-    public string LastName { get; set; }
+    {
+        [SecondaryIndex] public string EmailAddress { get; set; }
+        public string Password { get; set; }
+        public string FirstName { get; set; }
+        public string LastName { get; set; }
 
-    [RefTable(nameof(data.Organization))] public Organization Organization { get; set; }
-    [RefTable(nameof(Role))] public Role[] Roles { get; set; }
-}
+        [RefTable(nameof(data.Organization))]
+        [NoTrash]
+        public Organization Organization { get; set; }
+
+        //NoTrash is implied for SharedTables
+        [RefTable(nameof(Role))] [SharedTable] public Role[] Roles { get; set; }
+    }
 ```
 
 ```CSharp
@@ -54,7 +58,11 @@ var newId = RethinkHelper.Store(user);
 
 user = RethinkHelper.FindOne<User>(newId); //Gets the new user from Rethink and rebuilds the data structure
 
-//Delete the user, boolean is used to enable recursive mode which will delete all child records.
-//TODO: Shared lists that are ignored, and need to be manually deleted. (Example: Permissions)
-RethinkHelper.Trash(user, true);
+/**
+ * Delete the record and all direct child records, anything marked with NoTrash is kept.
+ * Any SharedTable's children are kept, only the link between the two is removed.
+ * This allows for things like Roles and Permissions to continue existing.
+**/
+RethinkHelper.Trash(user);
+//Note the RethinkObject itself will remain unmodified and can easily be restored just by storing it again.
 ```

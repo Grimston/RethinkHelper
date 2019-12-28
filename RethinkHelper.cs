@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,6 +11,7 @@ using RethinkDb.Driver;
 using RethinkDb.Driver.Ast;
 using RethinkDb.Driver.Extras.Dao;
 using RethinkDb.Driver.Model;
+using RethinkDb.Driver.Net;
 using RethinkDb.Driver.Net.Clustering;
 using RethinkDb.Driver.Utils;
 using RH.Attributes;
@@ -81,7 +83,6 @@ namespace RH
                 if (!p.CanWrite || !p.CanRead) continue;
                 var mget = p.GetGetMethod(false);
                 var mset = p.GetSetMethod(false);
-                // Get and set methods have to be public
                 if (mget == null) continue;
                 if (mset == null) continue;
 
@@ -89,15 +90,42 @@ namespace RH
                 {
                     if (p.PropertyType.IsArray)
                     {
-                        var jArray = (JArray) jsonObject[p.Name + "_list"];
-                        var newArray = Array.CreateInstance(p.PropertyType.GetElementType(), jArray.Count);
-                        for (var index = 0; index < jArray.Count; index++)
+                        if (Attribute.IsDefined(p, typeof(SharedTableAttribute)))
                         {
-                            newArray.SetValue(
-                                FindOne(p.PropertyType.GetElementType(), Guid.Parse(jArray[index].ToString())), index);
-                        }
+                            var parentName = tableName + "_id";
+                            var childName = p.PropertyType.GetElementType().Name + "_id";
+                            var dbTable = tableName + "_shared_" + p.PropertyType.GetElementType().Name;
+                            Cursor<JObject> cursor = RethinkDB.R.Table(dbTable).GetAll(id)[new {index = parentName}]
+                                .RunCursor<JObject>(ConnectionPool);
 
-                        p.SetValue(resultingDocument, newArray);
+
+                            var listType = typeof(List<>).MakeGenericType(p.PropertyType.GetElementType());
+                            var list = (IList) Activator.CreateInstance(listType);
+
+                            foreach (var reObject in cursor)
+                            {
+                                list.Add(FindOne(p.PropertyType.GetElementType(),
+                                    Guid.Parse((string) reObject[childName])));
+                            }
+
+                            var array = Array.CreateInstance(p.PropertyType.GetElementType(), list.Count);
+                            list.CopyTo(array, 0);
+
+                            p.SetValue(resultingDocument, array);
+                        }
+                        else
+                        {
+                            var jArray = (JArray) jsonObject[p.Name + "_list"];
+                            var newArray = Array.CreateInstance(p.PropertyType.GetElementType(), jArray.Count);
+                            for (var index = 0; index < jArray.Count; index++)
+                            {
+                                newArray.SetValue(
+                                    FindOne(p.PropertyType.GetElementType(), Guid.Parse(jArray[index].ToString())),
+                                    index);
+                            }
+
+                            p.SetValue(resultingDocument, newArray);
+                        }
                     }
                     else
                     {
@@ -151,53 +179,17 @@ namespace RH
         /// <param name="rethinkObject"></param>
         public static async Task<Guid> StoreAsync(object rethinkObject)
         {
-            var jsonObject = GetAndStoreJObject(rethinkObject);
             var tableName = rethinkObject.GetType().Name;
 
-            if (!Frozen && !RethinkDB.R.TableList().Contains(tableName).RunAtom<bool>(ConnectionPool))
+            if (!Frozen) //Handy for quick proto-typing, but would slow down a production build
             {
-                RethinkDB.R.TableCreate(tableName).Run(ConnectionPool);
-                foreach (var property in rethinkObject.GetType().GetProperties())
-                {
-                    if (Attribute.IsDefined(property, typeof(SecondaryIndexAttribute)))
-                    {
-                        RethinkDB.R.Table(tableName).IndexCreate(property.Name).RunNoReply(ConnectionPool);
-                        RethinkDB.R.Table(tableName).IndexWait().Run(ConnectionPool);
-                    }
-
-                    if (Attribute.IsDefined(property, typeof(RefTableAttribute)))
-                    {
-                        //TODO: Shared Array list tables?
-                        if (!property.PropertyType.IsArray)
-                        {
-                            RethinkDB.R.Table(tableName).IndexCreate(property.Name + "_id").RunNoReply(ConnectionPool);
-                        }
-
-                        RethinkDB.R.Table(tableName).IndexWait().Run(ConnectionPool);
-                    }
-                }
+                _EnsureTablesExist(rethinkObject);
             }
 
-            var result = await RethinkDB.R.Table(tableName)
-                .Insert(jsonObject)[new {return_changes = true}].OptArg("conflict", "replace")
-                .RunWriteAsync(ConnectionPool)
-                .ConfigureAwait(false);
-
-            result.AssertNoErrors();
-
-            if (result.Inserted == 0) return (Guid) jsonObject["id"];
-
-            return result.GeneratedKeys[0];
-        }
-
-        public static void Trash(object rethinkObject, bool recursive = false)
-        {
-            TrashAsync(rethinkObject, recursive).WaitSync();
-        }
-
-        public static async Task TrashAsync(object rethinkObject, bool recursive = false)
-        {
+            var obj = new JObject();
             var properties = rethinkObject.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            var storeSharedListItems = new List<SharedListItem>(0);
 
             foreach (var p in properties)
             {
@@ -216,19 +208,186 @@ namespace RH
 
                 if (Attribute.IsDefined(p, typeof(RefTableAttribute)))
                 {
-                    if (recursive) //TODO: Implement shared and Private lists, shared are kept in event of deletion
+                    if (p.PropertyType.IsArray)
                     {
-                        if (p.PropertyType.IsArray)
+                        if (Attribute.IsDefined(p, typeof(SharedTableAttribute)))
                         {
-                            foreach (var reObject in (Array) p.GetValue(rethinkObject))
-                            {
-                                await TrashAsync(reObject, true);
-                            }
+                            var parentName = tableName + "_id";
+                            var childName = p.PropertyType.GetElementType().Name + "_id";
+                            var dbTable = tableName + "_shared_" + p.PropertyType.GetElementType().Name;
+                            storeSharedListItems.AddRange(from object reObject in (Array) p.GetValue(rethinkObject)
+                                select new SharedListItem()
+                                {
+                                    Table = dbTable, ChildName = childName, ParentName = parentName,
+                                    ChildGuid = Store(reObject)
+                                });
                         }
                         else
                         {
-                            //Recursively store all children items loaded in the object
-                            await TrashAsync(p.GetValue(rethinkObject), true);
+                            obj[p.Name + "_list"] = new JArray(
+                                (from object reObject in (Array) p.GetValue(rethinkObject)
+                                    select Store(reObject)));
+                        }
+                    }
+                    else
+                    {
+                        obj[p.Name + "_id"] = Store(p.GetValue(rethinkObject));
+                    }
+                }
+                else
+                {
+                    if (p.Name == "Id")
+                    {
+                        //Only assign the id if we actually have one. Let RethinkDB generate it.
+                        var idValue = (Guid) p.GetValue(rethinkObject);
+                        if (idValue != Guid.Empty)
+                        {
+                            obj["id"] = new JValue(idValue);
+                        }
+                    }
+                    else
+                    {
+                        obj[p.Name] = new JValue(p.GetValue(rethinkObject));
+                    }
+                }
+            }
+
+            var result = await RethinkDB.R.Table(tableName)
+                .Insert(obj)[new {return_changes = true}].OptArg("conflict", "replace")
+                .RunWriteAsync(ConnectionPool)
+                .ConfigureAwait(false);
+
+            result.AssertNoErrors();
+
+            if (result.Inserted == 0) return (Guid) obj["id"];
+
+            var newKey = result.GeneratedKeys[0];
+
+            //Do we need to go back and fix child items?
+            if (storeSharedListItems.Count != 0)
+            {
+                foreach (var item in storeSharedListItems)
+                {
+                    RethinkDB.R.Table(item.Table)
+                        .Insert(new JObject {[item.ParentName] = newKey, [item.ChildName] = item.ChildGuid})
+                        .Run(ConnectionPool);
+                }
+            }
+
+            return newKey;
+        }
+
+        private static void _EnsureTablesExist(object rethinkObject)
+        {
+            var tableName = rethinkObject.GetType().Name;
+            if (!RethinkDB.R.TableList().Contains(tableName).RunAtom<bool>(ConnectionPool))
+            {
+                RethinkDB.R.TableCreate(tableName).Run(ConnectionPool);
+            }
+
+            foreach (var property in rethinkObject.GetType().GetProperties())
+            {
+                if (Attribute.IsDefined(property, typeof(SecondaryIndexAttribute)))
+                {
+                    if (!RethinkDB.R.Table(tableName).IndexList().Contains(property.Name)
+                        .RunAtom<bool>(ConnectionPool))
+                    {
+                        RethinkDB.R.Table(tableName).IndexCreate(property.Name).RunNoReply(ConnectionPool);
+                        RethinkDB.R.Table(tableName).IndexWait().Run(ConnectionPool);
+                    }
+                }
+
+                if (Attribute.IsDefined(property, typeof(RefTableAttribute)))
+                {
+                    if (property.PropertyType.IsArray && Attribute.IsDefined(property, typeof(SharedTableAttribute)))
+                    {
+                        var sharedTable = tableName + "_shared_" + property.PropertyType.GetElementType().Name;
+                        var parentName = tableName + "_id";
+                        var childName = property.PropertyType.GetElementType() + "_id";
+
+                        _CreateSharedTable(sharedTable, parentName, childName);
+                    }
+                    else
+                    {
+                        if (!RethinkDB.R.Table(tableName).IndexList().Contains(property.Name)
+                            .RunAtom<bool>(ConnectionPool))
+                        {
+                            RethinkDB.R.Table(tableName).IndexCreate(property.Name + "_id")
+                                .RunNoReply(ConnectionPool);
+                            RethinkDB.R.Table(tableName).IndexWait().Run(ConnectionPool);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void _CreateSharedTable(string sharedTable, string parentName, string childName)
+        {
+            //Shared List Table...
+            if (!RethinkDB.R.TableList().Contains(sharedTable).RunAtom<bool>(ConnectionPool))
+            {
+                RethinkDB.R.TableCreate(sharedTable).Run(ConnectionPool);
+            }
+
+            if (!RethinkDB.R.Table(sharedTable).IndexList().Contains(parentName).RunAtom<bool>(ConnectionPool))
+            {
+                RethinkDB.R.Table(sharedTable).IndexCreate(parentName).RunNoReply(ConnectionPool);
+            }
+
+            if (!RethinkDB.R.Table(sharedTable).IndexList().Contains(childName).RunAtom<bool>(ConnectionPool))
+            {
+                RethinkDB.R.Table(sharedTable).IndexCreate(childName).RunNoReply(ConnectionPool);
+            }
+
+            RethinkDB.R.Table(sharedTable).IndexWait().Run(ConnectionPool);
+        }
+
+        public static void Trash(object rethinkObject)
+        {
+            TrashAsync(rethinkObject).WaitSync();
+        }
+
+        public static async Task TrashAsync(object rethinkObject)
+        {
+            var properties = rethinkObject.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            foreach (var p in properties)
+            {
+                if (Attribute.IsDefined(p, typeof(NonSerializedAttribute))) continue;
+                if (!p.CanWrite || !p.CanRead) continue;
+                var mget = p.GetGetMethod(false);
+                var mset = p.GetSetMethod(false);
+                // Get and set methods have to be public
+                if (mget == null) continue;
+                if (mset == null) continue;
+
+                if (Attribute.IsDefined(p, typeof(RefTableAttribute)))
+                {
+                    if (p.PropertyType.IsArray)
+                    {
+                        if (Attribute.IsDefined(p, typeof(SharedTableAttribute)))
+                        {
+                            var sharedTable = rethinkObject.GetType().Name + "_shared_" +
+                                              p.PropertyType.GetElementType().Name;
+                            var parentName = rethinkObject.GetType().Name + "_id";
+                            RethinkDB.R.Table(sharedTable)
+                                .GetAll(rethinkObject.GetType().GetProperty("Id").GetValue(rethinkObject))[
+                                    new {index = parentName}].Delete().Run(ConnectionPool);
+                        }
+                        else
+                        {
+                            foreach (var reObject in (Array) p.GetValue(rethinkObject))
+                            {
+                                await TrashAsync(reObject);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        //Only delete the child item IF we are missing NoTrash
+                        if (!Attribute.IsDefined(p, typeof(NoTrashAttribute)))
+                        {
+                            await TrashAsync(p.GetValue(rethinkObject));
                         }
                     }
                 }
@@ -245,15 +404,15 @@ namespace RH
             }
         }
 
-        public static void Trash<T>(RethinkObject<T, Guid> obj, bool recursive = false) where T : IDocument<Guid>, new()
+        public static void Trash<T>(RethinkObject<T, Guid> obj) where T : IDocument<Guid>, new()
         {
-            TrashAsync(obj, recursive).WaitSync();
+            TrashAsync(obj).WaitSync();
         }
 
-        public static async Task TrashAsync<T>(RethinkObject<T, Guid> obj, bool recursive = false)
+        public static async Task TrashAsync<T>(RethinkObject<T, Guid> obj)
             where T : IDocument<Guid>, new()
         {
-            await TrashAsync((object) obj, recursive);
+            await TrashAsync((object) obj);
         }
 
         public static JObject GetAndStoreJObject(object rethinkObject)
