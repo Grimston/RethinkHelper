@@ -104,8 +104,13 @@ namespace RH
 
                             foreach (var reObject in cursor)
                             {
-                                list.Add(FindOne(p.PropertyType.GetElementType(),
-                                    Guid.Parse((string) reObject[childName])));
+                                var sharedObject = FindOne(p.PropertyType.GetElementType(),
+                                    Guid.Parse((string) reObject[childName]));
+                                sharedObject.GetType()
+                                    .GetProperty("SharedId", BindingFlags.NonPublic | BindingFlags.Instance)
+                                    .SetValue(sharedObject, Guid.Parse(reObject["id"].ToString()));
+
+                                list.Add(sharedObject);
                             }
 
                             var array = Array.CreateInstance(p.PropertyType.GetElementType(), list.Count);
@@ -218,8 +223,14 @@ namespace RH
                             storeSharedListItems.AddRange(from object reObject in (Array) p.GetValue(rethinkObject)
                                 select new SharedListItem()
                                 {
-                                    Table = dbTable, ChildName = childName, ParentName = parentName,
-                                    ChildGuid = Store(reObject)
+                                    Table = dbTable,
+                                    ChildName = childName,
+                                    ParentName = parentName,
+                                    ChildGuid = Store(reObject),
+                                    SharedId = Guid.Parse(reObject.GetType()
+                                        .GetProperty("SharedId", BindingFlags.NonPublic | BindingFlags.Instance)
+                                        .GetValue(reObject)
+                                        .ToString())
                                 });
                         }
                         else
@@ -238,7 +249,6 @@ namespace RH
                 {
                     if (p.Name == "Id")
                     {
-                        //Only assign the id if we actually have one. Let RethinkDB generate it.
                         var idValue = (Guid) p.GetValue(rethinkObject);
                         if (idValue != Guid.Empty)
                         {
@@ -259,17 +269,23 @@ namespace RH
 
             result.AssertNoErrors();
 
-            if (result.Inserted == 0) return (Guid) obj["id"];
-
-            var newKey = result.GeneratedKeys[0];
+            //Get old or new key
+            var newKey = obj["id"] != null ? (Guid) obj["id"] : result.GeneratedKeys[0];
 
             //Do we need to go back and fix child items?
             if (storeSharedListItems.Count != 0)
             {
                 foreach (var item in storeSharedListItems)
                 {
+                    var reObject = new JObject {[item.ParentName] = newKey, [item.ChildName] = item.ChildGuid};
+                    //Only assign the id if we actually have one. Let RethinkDB generate it.
+                    if (item.SharedId != Guid.Empty)
+                    {
+                        reObject["id"] = item.SharedId;
+                    }
+
                     RethinkDB.R.Table(item.Table)
-                        .Insert(new JObject {[item.ParentName] = newKey, [item.ChildName] = item.ChildGuid})
+                        .Insert(reObject)
                         .Run(ConnectionPool);
                 }
             }
@@ -409,64 +425,9 @@ namespace RH
             TrashAsync(obj).WaitSync();
         }
 
-        public static async Task TrashAsync<T>(RethinkObject<T, Guid> obj)
-            where T : IDocument<Guid>, new()
+        public static async Task TrashAsync<T>(RethinkObject<T, Guid> obj) where T : IDocument<Guid>, new()
         {
             await TrashAsync((object) obj);
-        }
-
-        public static JObject GetAndStoreJObject(object rethinkObject)
-        {
-            var obj = new JObject();
-            var properties = rethinkObject.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-
-            foreach (var p in properties)
-            {
-                if (Attribute.IsDefined(p, typeof(NonSerializedAttribute))) continue;
-
-                // If not writable then cannot null it; if not readable then cannot check it's value
-                if (!p.CanWrite || !p.CanRead) continue;
-
-                var mget = p.GetGetMethod(false);
-                var mset = p.GetSetMethod(false);
-
-                // Get and set methods have to be public
-                if (mget == null) continue;
-
-                if (mset == null) continue;
-
-                if (Attribute.IsDefined(p, typeof(RefTableAttribute)))
-                {
-                    if (p.PropertyType.IsArray)
-                    {
-                        obj[p.Name + "_list"] = new JArray((from object reObject in (Array) p.GetValue(rethinkObject)
-                            select Store(reObject)));
-                    }
-                    else
-                    {
-                        //Recursively store all children items loaded in the object
-                        obj[p.Name + "_id"] = Store(p.GetValue(rethinkObject));
-                    }
-                }
-                else
-                {
-                    if (p.Name == "Id")
-                    {
-                        //Only assign the id if we actually have one. Let RethinkDB generate it.
-                        var idValue = (Guid) p.GetValue(rethinkObject);
-                        if (idValue != Guid.Empty)
-                        {
-                            obj["id"] = new JValue(idValue);
-                        }
-                    }
-                    else
-                    {
-                        obj[p.Name] = new JValue(p.GetValue(rethinkObject));
-                    }
-                }
-            }
-
-            return obj;
         }
     }
 }

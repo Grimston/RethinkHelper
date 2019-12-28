@@ -9,5 +9,6 @@ namespace RH
         public string ChildName { get; set; }
 
         public Guid ChildGuid { get; set; }
+        public Guid SharedId { get; set; }
     }
 }
