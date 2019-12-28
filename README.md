@@ -1,23 +1,24 @@
 RethinkDB Helper heavily inspired by RedBeanPHP more features to come in the near future.
 
-Example data class
+##Example data class
 ```CSharp
 public class User : RethinkObject<User, Guid>, IDocument<Guid>
-    {
-        [SecondaryIndex] public string EmailAddress { get; set; }
-        public string Password { get; set; }
-        public string FirstName { get; set; }
-        public string LastName { get; set; }
+{
+    [SecondaryIndex] public string EmailAddress { get; set; }
+    public string Password { get; set; }
+    public string FirstName { get; set; }
+    public string LastName { get; set; }
 
-        [RefTable(nameof(data.Organization))]
-        [NoTrash]
-        public Organization Organization { get; set; }
+    [RefTable(nameof(data.Organization))]
+    [NoTrash]
+    public Organization Organization { get; set; }
 
-        //NoTrash is implied for SharedTables
-        [RefTable(nameof(Role))] [SharedTable] public Role[] Roles { get; set; }
-    }
+    //NoTrash is implied for SharedTables
+    [RefTable(nameof(Role))] [SharedTable] public Role[] Roles { get; set; }
+}
 ```
 
+##Usage example
 ```CSharp
 RethinkHelper.Connect("127.0.0.1", "test");
 
