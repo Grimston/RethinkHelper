@@ -1,6 +1,6 @@
 RethinkDB Helper heavily inspired by RedBeanPHP more features to come in the near future.
 
-##Example data class
+## Example data class
 ```CSharp
 public class User : RethinkObject<User, Guid>, IDocument<Guid>
 {
@@ -18,7 +18,7 @@ public class User : RethinkObject<User, Guid>, IDocument<Guid>
 }
 ```
 
-##Usage example
+## Usage example
 ```CSharp
 RethinkHelper.Connect("127.0.0.1", "test");
 
