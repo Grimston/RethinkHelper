@@ -13,8 +13,8 @@ public class User : RethinkObject<User>, IDocument<Guid>
     [NoTrash]
     public Organization Organization { get; set; }
 
-    //NoTrash is implied for SharedTables
-    [RefTable(nameof(Role))] [SharedTable] public Role[] Roles { get; set; }
+    //Deffered loading of data, only the shared table is loaded into memory first.
+    [RefTable(nameof(Role))] [SharedTable] public RethinkArray<Role> Roles { get; set; }
 }
 ```
 
@@ -23,32 +23,37 @@ public class User : RethinkObject<User>, IDocument<Guid>
 RethinkHelper.Connect("127.0.0.1", "test");
 
 var user = RethinkHelper.Dispense<User>();
-user.FirstName = "Joe";
-user.LastName = "Blow";
-user.EmailAddress = "email@example.com";
-user.Password = "MySecurePassword";
-user.Organization = new Organization
+user.Username = "User_Username";
+user.Password = "User_Password";
+user.UserAttributes = new RethinkArray<UserAttributes>
 {
-    Address = "123 Mythical Lane",
-    Enabled = true,
-    Name = "Testing Company"
+    new UserAttributes
+    {
+        Name = "Test1",
+        Value = "Test1 Value"
+    },
+    new UserAttributes
+    {
+        Name = "Test2",
+        Value = "Test2 Value"
+    },
 };
-user.Roles = new[]
+user.Roles = new RethinkArray<Role>
 {
     new Role
     {
-        Name = "Administrator",
-        Permission = new[]
+        Name = "Testing Role",
+        Permissions = new RethinkArray<Permission>
         {
             new Permission
             {
-                Name = "Administrator",
+                Name = "Permission 1",
                 Type = true
             },
             new Permission
             {
-                Name = "Database View",
-                Type = true
+                Name = "Permission 2",
+                Type = false
             }
         }
     }
@@ -58,6 +63,16 @@ user.Roles = new[]
 var newId = RethinkHelper.Store(user);
 
 user = RethinkHelper.FindOne<User>(newId); //Gets the new user from Rethink and rebuilds the data structure
+
+foreach (var role in user.Roles)
+{
+    //The role is loaded from the database during enumeration, this slows down the loop
+    //But does mean the inital response is faster and we only load what is needed.
+    foreach (var permission in role.Permissions)
+    {
+        //Same deal as long as a property is using RethinkArray<>
+    }
+}
 
 /**
  * Delete the record and all direct child records, anything marked with NoTrash is kept.
