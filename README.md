@@ -1,5 +1,10 @@
 RethinkDB Helper heavily inspired by RedBeanPHP more features to come in the near future.
 
+## Installation
+Download the latest release or source code.
+
+Alternativly you can use Nuget: https://www.nuget.org/packages/RethinkHelper
+
 ## Example data class
 ```CSharp
 public class User : RethinkObject<User>, IDocument<Guid>
