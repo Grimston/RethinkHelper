@@ -1,14 +1,36 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
-        <TargetFramework>netcoreapp2.2</TargetFramework>
         <AssemblyName>RH</AssemblyName>
         <RootNamespace>RH</RootNamespace>
         <LangVersion>latest</LangVersion>
+        <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+        <PackageId>RethinkHelper</PackageId>
+        <Authors>Nathan Pipes</Authors>
+        <Company>NPIpes</Company>
+        <Product>RethinkHelper</Product>
+        <Description>Easily deal with modal files and RethinkDB using a simple API inspired by RedBeanPHP.</Description>
+        <Copyright>2019 Nathan Pipes</Copyright>
+        <PackageTags>rethinkdb, orm</PackageTags>
+        <PackageProjectUrl>https://github.com/Grimston/RethinkHelper</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/Grimston/RethinkHelper</RepositoryUrl>
+        <RepositoryType></RepositoryType>
+        <PackageLicenseFile>LICENSE</PackageLicenseFile>
+        <PackageVersion>1.0.1</PackageVersion>
+        <AssemblyVersion>1.0.1</AssemblyVersion>
+        <FileVersion>1.0.1</FileVersion>
+        <TargetFramework>netstandard2.0</TargetFramework>
     </PropertyGroup>
 
     <ItemGroup>
       <PackageReference Include="RethinkDb.Driver" Version="2.3.150" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Include="LICENSE">
+        <Pack>True</Pack>
+        <PackagePath></PackagePath>
+      </None>
     </ItemGroup>
 
 </Project>
